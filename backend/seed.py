@@ -26,4 +26,4 @@ for section in ["A", "B"]:
     if not db.scalar(select(AcademicSection).where(AcademicSection.name == section)):
         db.add(AcademicSection(name=section))
 db.commit(); db.close()
-print("Demo users created.")
+print("Initial database tables and demo records created.")

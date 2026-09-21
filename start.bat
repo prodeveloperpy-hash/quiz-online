@@ -112,19 +112,22 @@ if "%NEW_DATABASE%"=="1" (
     if errorlevel 1 goto DATABASE_SETUP_ERROR
 )
 
-echo [INFO] Creating/updating demo accounts...
-pushd "backend"
-".venv\Scripts\python.exe" seed.py
-if errorlevel 1 (
+if "%NEW_DATABASE%"=="1" (
+    echo [SETUP] Creating initial tables and demo accounts...
+    pushd "backend"
+    ".venv\Scripts\python.exe" seed.py
+    if errorlevel 1 (
+        popd
+        echo.
+        echo [ERROR] Initial database setup failed.
+        echo See SETUP.md for database configuration.
+        pause
+        exit /b 1
+    )
     popd
-    echo.
-    echo [ERROR] Could not connect to MySQL.
-    echo Start Docker Desktop or your local MySQL service, then run start.bat again.
-    echo See SETUP.md for database configuration.
-    pause
-    exit /b 1
+) else (
+    echo [OK] Existing database detected. Initial seed skipped.
 )
-popd
 
 echo [INFO] Closing any previous Quiz Online processes...
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"127.0.0.1:8000 .*LISTENING"') do taskkill /PID %%P /T /F >nul 2>nul
