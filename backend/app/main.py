@@ -404,7 +404,8 @@ def start_quiz(quiz_id: int, db: Session = Depends(get_db), student: User = Depe
         if previous: previous.retake_allowed = False
         db.add(attempt); db.commit(); db.refresh(attempt)
     deadline = min(quiz.ends_at, attempt.started_at + timedelta(minutes=quiz.duration_minutes))
-    return {"attempt_id": attempt.id, "deadline": deadline, "quiz": quiz_dict(quiz)}
+    return {"attempt_id": attempt.id, "deadline": deadline.replace(tzinfo=timezone.utc),
+            "server_time": now.replace(tzinfo=timezone.utc), "quiz": quiz_dict(quiz)}
 
 
 @app.put("/api/attempts/{attempt_id}/answers")

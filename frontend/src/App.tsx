@@ -25,7 +25,7 @@ function Shell({user,onLogout,active,onNavigate,children}:{user:User;onLogout:()
 function Header({user}:{user:User}){return <header><div><span className="eyebrow">{new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</span><h1>Good day, {user.name.split(' ')[0]}</h1><p>{user.role==='student'?`${user.department} • Semester ${user.semester} • Section ${user.section}`:'Shape better outcomes with every assessment.'}</p></div><div className="role-chip"><Sparkles/> {user.role.toUpperCase()}</div></header>}
 
 function StudentDashboard({user,view}:{user:User;view:DashboardView}){
- const [quizzes,setQuizzes]=useState<Quiz[]>([]),[attempts,setAttempts]=useState<Attempt[]>([]),[taking,setTaking]=useState<{attempt_id:number;deadline:string;quiz:Quiz}|null>(null),[error,setError]=useState('')
+ const [quizzes,setQuizzes]=useState<Quiz[]>([]),[attempts,setAttempts]=useState<Attempt[]>([]),[taking,setTaking]=useState<{attempt_id:number;deadline:string;server_time:string;quiz:Quiz}|null>(null),[error,setError]=useState('')
  const load=()=>Promise.all([api<Quiz[]>('/quizzes'),api<Attempt[]>('/attempts')]).then(([q,a])=>{setQuizzes(q);setAttempts(a)}).catch(e=>setError(e.message)); useEffect(()=>{load()},[])
  async function start(id:number){try{setTaking(await api(`/quizzes/${id}/start`,{method:'POST'}))}catch(e){setError((e as Error).message)}}
  if(taking)return <QuizPlayer data={taking} onDone={()=>{setTaking(null);load()}}/>
@@ -35,8 +35,9 @@ function StudentDashboard({user,view}:{user:User;view:DashboardView}){
  {(view==='overview'||view==='results')&&<><Title title="Recent results" subtitle="Objective results appear instantly; final results follow teacher review"/><div className="table">{attempts.map(a=><div className="table-row" key={a.id}><div><b>{a.quiz_title}</b><small>{a.status.replace('_',' ')}</small></div><strong>{a.total_score}/{a.total_marks}</strong><span className={`status ${a.status}`}>{a.status.replace('_',' ')}</span></div>)}{!attempts.length&&<Empty text="Your completed assessments will appear here."/>}</div></>}</>
 }
 
-function QuizPlayer({data,onDone}:{data:{attempt_id:number;deadline:string;quiz:Quiz};onDone:()=>void}){
- const [answers,setAnswers]=useState<Record<number,{selected_option_id?:number;text_answer?:string}>>({}),[seconds,setSeconds]=useState(Math.max(0,Math.floor((new Date(data.deadline).getTime()-Date.now())/1000))),[notice,setNotice]=useState(''),[result,setResult]=useState<{objective_score:number;total_marks:number;message:string;review?:{question_id:number;question:string;selected_answer:string;correct_answer:string;is_correct:boolean;awarded_marks:number;marks:number}[]}|null>(null)
+function QuizPlayer({data,onDone}:{data:{attempt_id:number;deadline:string;server_time:string;quiz:Quiz};onDone:()=>void}){
+ const serverSeconds=Math.max(0,Math.floor((new Date(data.deadline).getTime()-new Date(data.server_time).getTime())/1000))
+ const [answers,setAnswers]=useState<Record<number,{selected_option_id?:number;text_answer?:string}>>({}),[seconds,setSeconds]=useState(serverSeconds),[notice,setNotice]=useState(''),[result,setResult]=useState<{objective_score:number;total_marks:number;message:string;review?:{question_id:number;question:string;selected_answer:string;correct_answer:string;is_correct:boolean;awarded_marks:number;marks:number}[]}|null>(null)
  const payload=()=>({answers:Object.entries(answers).map(([id,a])=>({question_id:+id,...a}))})
  async function save(){await api(`/attempts/${data.attempt_id}/answers`,{method:'PUT',body:JSON.stringify(payload())})}
  async function submit(){await save();setResult(await api(`/attempts/${data.attempt_id}/submit`,{method:'POST'}))}
