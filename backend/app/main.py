@@ -373,7 +373,28 @@ def finalize(attempt_id: int, db: Session = Depends(get_db), user: User = Depend
     attempt.total_score = attempt.objective_score + attempt.manual_score
     attempt.status = AttemptStatus.completed
     max_marks = sum(q.marks for q in attempt.quiz.questions)
-    emailed = send_result_email(attempt.student.email, attempt.student.name, attempt.quiz.title, attempt.total_score, max_marks)
+    answer_map = {a.question_id: a for a in attempt.answers}
+    email_details = []
+    for question in attempt.quiz.questions:
+        answer = answer_map.get(question.id)
+        if question.question_type == QuestionType.mcq:
+            selected = next((o for o in question.options if answer and o.id == answer.selected_option_id), None)
+            correct = next((o for o in question.options if o.is_correct), None)
+            email_details.append({"type": "mcq", "question": question.text,
+                                  "student_answer": selected.text if selected else "Not answered",
+                                  "correct_answer": correct.text if correct else "",
+                                  "is_correct": bool(answer and answer.is_correct),
+                                  "awarded_marks": answer.awarded_marks if answer else 0, "marks": question.marks})
+        else:
+            awarded = answer.awarded_marks if answer and answer.awarded_marks is not None else 0
+            email_details.append({"type": "short", "question": question.text,
+                                  "student_answer": answer.text_answer if answer else "Not answered",
+                                  "correct_answer": "", "is_correct": awarded >= question.marks,
+                                  "awarded_marks": awarded, "marks": question.marks,
+                                  "feedback": answer.teacher_feedback if answer else ""})
+    emailed = send_result_email(attempt.student.email, attempt.student.name, attempt.quiz.title,
+                                attempt.total_score, max_marks, attempt.objective_score,
+                                attempt.manual_score, email_details)
     attempt.final_email_sent = emailed
     db.commit()
     return {"message": "Final result published" + (" and emailed" if emailed else "; SMTP is not configured"), "score": attempt.total_score}
