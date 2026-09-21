@@ -26,6 +26,20 @@ API docs: http://localhost:8000/docs
 
 For Gmail result emails, edit `backend/.env` and set `SMTP_EMAIL` and `SMTP_APP_PASSWORD`. Use a Google App Password, not the normal account password.
 
+Example:
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_EMAIL=youraccount@gmail.com
+SMTP_APP_PASSWORD=your-16-character-google-app-password
+SMTP_FROM_NAME=Quiz Online
+```
+
+Enable 2-Step Verification on the Google account, generate an App Password, and place it only in `backend/.env`. The real `.env` file is ignored by Git and must never be pushed to GitHub.
+
+On a new computer, install Python 3.11+, Node.js 20+, and MySQL Server 8.4, then double-click `start.bat`. It automatically creates the Python environment, installs `requirements.txt`, installs npm packages, initializes an empty local database, creates tables/demo users, and starts the application.
+
 ## 3. Start the React frontend
 
 Open a second terminal:
