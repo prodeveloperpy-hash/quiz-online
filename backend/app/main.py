@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -8,7 +8,7 @@ from .config import settings
 from .database import Base, engine, get_db
 from .email_service import send_result_email
 from .models import AcademicDepartment, AcademicSection, AcademicSemester, Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
-from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, SaveAnswersIn, SectionIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
+from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, QuizPublishIn, SaveAnswersIn, SectionIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
 
 
 app = FastAPI(title="Quiz Online API", version="1.0.0")
@@ -19,6 +19,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def utc_naive(value: datetime) -> datetime:
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
 @app.on_event("startup")
@@ -255,11 +259,13 @@ def delete_section(section_id: int, db: Session = Depends(get_db), user: User = 
 
 @app.post("/api/quizzes")
 def create_quiz(data: QuizCreate, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
-    if data.ends_at <= data.starts_at:
+    if data.starts_at and data.ends_at and data.ends_at <= data.starts_at:
         raise HTTPException(422, "Quiz end time must be after its start time")
+    draft_start = utc_naive(data.starts_at) if data.starts_at else datetime.utcnow()
+    draft_end = utc_naive(data.ends_at) if data.ends_at else (draft_start + timedelta(days=1))
     quiz = Quiz(title=data.title, description=data.description, creator_id=user.id, department=data.department,
                 semester=data.semester, section=data.section.upper(), duration_minutes=data.duration_minutes,
-                starts_at=data.starts_at, ends_at=data.ends_at)
+                starts_at=draft_start, ends_at=draft_end)
     for index, q in enumerate(data.questions):
         question = Question(text=q.text, question_type=q.question_type, marks=q.marks, position=index)
         question.options = [Option(text=o.text, is_correct=o.is_correct) for o in q.options]
@@ -280,12 +286,20 @@ def quizzes(db: Session = Depends(get_db), user: User = Depends(current_user)):
 
 
 @app.post("/api/quizzes/{quiz_id}/publish")
-def publish_quiz(quiz_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+def publish_quiz(quiz_id: int, data: QuizPublishIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
     quiz = db.get(Quiz, quiz_id)
     if not quiz: raise HTTPException(404, "Quiz not found")
     ensure_quiz_owner(quiz, user)
+    publish_start, publish_end = utc_naive(data.starts_at), utc_naive(data.ends_at)
+    if publish_end <= publish_start:
+        raise HTTPException(422, "Quiz end time must be after its start time")
+    if publish_end <= datetime.utcnow():
+        raise HTTPException(422, "Quiz end time must be in the future")
+    quiz.duration_minutes = data.duration_minutes
+    quiz.starts_at = publish_start
+    quiz.ends_at = publish_end
     quiz.status = QuizStatus.published; db.commit()
-    return {"message": "Quiz published"}
+    return {"message": "Quiz scheduled and published"}
 
 
 @app.post("/api/quizzes/{quiz_id}/start")

@@ -44,10 +44,16 @@ class QuizCreate(BaseModel):
     department: str
     semester: int = Field(ge=1, le=20)
     section: str
+    duration_minutes: int = Field(default=30, ge=1, le=240)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    questions: list[QuestionIn]
+
+
+class QuizPublishIn(BaseModel):
     duration_minutes: int = Field(ge=1, le=240)
     starts_at: datetime
     ends_at: datetime
-    questions: list[QuestionIn]
 
 
 class AnswerIn(BaseModel):
