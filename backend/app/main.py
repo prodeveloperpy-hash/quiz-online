@@ -7,7 +7,7 @@ from .auth import allow_roles, create_token, current_user, hash_password, verify
 from .config import settings
 from .database import Base, engine, get_db
 from .email_service import send_result_email
-from .models import AcademicDepartment, AcademicSection, AcademicSemester, Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
+from .models import AcademicDepartment, AcademicSection, AcademicSemester, Answer, Attempt, AttemptStatus, AuditLog, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
 from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, QuizPublishIn, SaveAnswersIn, SectionIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
 
 
@@ -75,6 +75,11 @@ def class_matches(target: dict, department: str | None, semester: int | None, se
     return (str(target.get("department", "")).strip().casefold() == str(department or "").strip().casefold()
             and int(target.get("semester", 0)) == int(semester or 0)
             and str(target.get("section", "")).strip().casefold() == str(section or "").strip().casefold())
+
+
+def add_audit(db: Session, actor: User, action: str, entity_type: str, entity_id: int | None, details: str):
+    db.add(AuditLog(actor_id=actor.id, actor_name=actor.name, action=action,
+                    entity_type=entity_type, entity_id=entity_id, details=details))
 
 
 def get_attempt(db: Session, attempt_id: int, load: bool = True) -> Attempt:
@@ -304,7 +309,9 @@ def create_quiz(data: QuizCreate, db: Session = Depends(get_db), user: User = De
         question = Question(text=q.text, question_type=q.question_type, marks=q.marks, position=index)
         question.options = [Option(text=o.text, is_correct=o.is_correct) for o in q.options]
         quiz.questions.append(question)
-    db.add(quiz); db.commit(); db.refresh(quiz)
+    db.add(quiz); db.flush()
+    add_audit(db, user, "quiz_created", "quiz", quiz.id, f"Created draft quiz: {quiz.title}")
+    db.commit(); db.refresh(quiz)
     return {"id": quiz.id, "message": "Quiz created as draft"}
 
 
@@ -331,6 +338,7 @@ def update_quiz(quiz_id: int, data: QuizCreate, db: Session = Depends(get_db), u
         question = Question(text=item.text, question_type=item.question_type, marks=item.marks, position=index)
         question.options = [Option(text=option.text, is_correct=option.is_correct) for option in item.options]
         quiz.questions.append(question)
+    add_audit(db, user, "quiz_updated", "quiz", quiz.id, f"Updated quiz content and assignments: {quiz.title}")
     db.commit()
     return {"message": "Quiz updated successfully"}
 
@@ -343,6 +351,7 @@ def delete_quiz(quiz_id: int, db: Session = Depends(get_db), user: User = Depend
     ensure_quiz_owner(quiz, user)
     if db.scalar(select(Attempt.id).where(Attempt.quiz_id == quiz.id).limit(1)):
         raise HTTPException(409, "This quiz has student submissions and cannot be deleted")
+    add_audit(db, user, "quiz_deleted", "quiz", quiz.id, f"Deleted quiz: {quiz.title}")
     db.delete(quiz)
     db.commit()
     return {"message": "Quiz deleted successfully"}
@@ -381,7 +390,10 @@ def publish_quiz(quiz_id: int, data: QuizPublishIn, db: Session = Depends(get_db
             if normalized not in audiences: audiences.append(normalized)
         quiz.audiences = audiences
         quiz.department, quiz.semester, quiz.section = audiences[0]["department"], audiences[0]["semester"], audiences[0]["section"]
-    quiz.status = QuizStatus.published; db.commit()
+    quiz.status = QuizStatus.published
+    add_audit(db, user, "quiz_published", "quiz", quiz.id,
+              f"Published/rescheduled {quiz.title} to {len(quiz.audiences or []) or 1} class(es)")
+    db.commit()
     return {"message": "Quiz assignments, schedule, and publication updated"}
 
 
@@ -400,6 +412,8 @@ def resend_quiz_to_all(quiz_id: int, db: Session = Depends(get_db), user: User =
     eligible = [attempt for attempt in latest_by_student.values() if attempt.status != AttemptStatus.in_progress]
     for attempt in eligible:
         attempt.retake_allowed = True
+    add_audit(db, user, "quiz_resent_all", "quiz", quiz.id,
+              f"Resent {quiz.title}; enabled a new attempt for {len(eligible)} completed student(s)")
     db.commit()
     return {"message": f"Quiz resent to {len(eligible)} student(s) who already completed it", "students_enabled": len(eligible)}
 
@@ -420,8 +434,12 @@ def start_quiz(quiz_id: int, db: Session = Depends(get_db), student: User = Depe
         raise HTTPException(409, "Quiz already attempted; teacher approval is required for a retake")
     else:
         attempt = Attempt(quiz_id=quiz.id, student_id=student.id, attempt_number=(previous.attempt_number + 1 if previous else 1))
-        if previous: previous.retake_allowed = False
-        db.add(attempt); db.commit(); db.refresh(attempt)
+        if previous:
+            previous.retake_allowed = False
+        db.add(attempt); db.flush()
+        add_audit(db, student, "retake_started" if previous else "attempt_started", "attempt", attempt.id,
+                  f"Started attempt #{attempt.attempt_number} for {quiz.title}")
+        db.commit(); db.refresh(attempt)
     deadline = min(quiz.ends_at, attempt.started_at + timedelta(minutes=quiz.duration_minutes))
     return {"attempt_id": attempt.id, "deadline": deadline.replace(tzinfo=timezone.utc),
             "server_time": now.replace(tzinfo=timezone.utc), "quiz": quiz_dict(quiz)}
@@ -461,6 +479,9 @@ def submit(attempt_id: int, db: Session = Depends(get_db), student: User = Depen
     attempt = get_attempt(db, attempt_id)
     if attempt.student_id != student.id: raise HTTPException(403, "Not your attempt")
     submit_attempt(db, attempt)
+    add_audit(db, student, "attempt_submitted", "attempt", attempt.id,
+              f"Submitted attempt #{attempt.attempt_number} for {attempt.quiz.title} with score {attempt.total_score}")
+    db.commit()
     max_marks = sum(q.marks for q in attempt.quiz.questions)
     saved_answers = {a.question_id: a for a in attempt.answers}
     review = []
@@ -491,10 +512,59 @@ def attempts(db: Session = Depends(get_db), user: User = Depends(current_user)):
     elif user.role == Role.teacher: query = query.join(Quiz).where(Quiz.creator_id == user.id)
     rows = db.scalars(query).unique().all()
     return [{"id": a.id, "quiz_id": a.quiz_id, "quiz_title": a.quiz.title, "student_name": a.student.name,
+             "student_roll_number": a.student.roll_number, "attempt_number": a.attempt_number,
              "status": a.status.value, "objective_score": a.objective_score, "manual_score": a.manual_score,
              "total_score": a.total_score, "total_marks": sum(q.marks for q in a.quiz.questions),
              "tab_violations": a.tab_violations, "submission_reason": a.submission_reason,
              "retake_allowed": a.retake_allowed} for a in rows]
+
+
+@app.get("/api/dashboard/analytics")
+def dashboard_analytics(db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+    quiz_query = select(Quiz).options(selectinload(Quiz.questions)).order_by(Quiz.created_at.desc())
+    if user.role == Role.teacher:
+        quiz_query = quiz_query.where(Quiz.creator_id == user.id)
+    quiz_rows = db.scalars(quiz_query).unique().all()
+    quiz_ids = [quiz.id for quiz in quiz_rows]
+    attempt_rows = db.scalars(select(Attempt).where(Attempt.quiz_id.in_(quiz_ids))).all() if quiz_ids else []
+    submitted = [attempt for attempt in attempt_rows if attempt.status != AttemptStatus.in_progress]
+    percentages = []
+    for attempt in submitted:
+        total_marks = sum(question.marks for question in next((quiz for quiz in quiz_rows if quiz.id == attempt.quiz_id), attempt.quiz).questions)
+        if total_marks: percentages.append((attempt.total_score / total_marks) * 100)
+    resend_query = select(AuditLog).where(AuditLog.action.in_(["quiz_resent_all", "student_retake_allowed"]))
+    resend_logs = db.scalars(resend_query).all()
+    if user.role == Role.teacher:
+        resend_logs = [log for log in resend_logs if log.actor_id == user.id]
+    chart = []
+    for quiz in quiz_rows[:8]:
+        quiz_attempts = [attempt for attempt in attempt_rows if attempt.quiz_id == quiz.id]
+        quiz_submitted = [attempt for attempt in quiz_attempts if attempt.status != AttemptStatus.in_progress]
+        total_marks = sum(question.marks for question in quiz.questions)
+        average = round(sum((attempt.total_score / total_marks) * 100 for attempt in quiz_submitted) / len(quiz_submitted), 1) if quiz_submitted and total_marks else 0
+        chart.append({"quiz_id": quiz.id, "title": quiz.title, "attempts": len(quiz_attempts),
+                      "completed": len(quiz_submitted), "average_percentage": average})
+    return {"total_quizzes": len(quiz_rows), "published_quizzes": sum(quiz.status == QuizStatus.published for quiz in quiz_rows),
+            "total_attempts": len(attempt_rows), "completed_attempts": len(submitted),
+            "active_attempts": len(attempt_rows) - len(submitted), "resend_actions": len(resend_logs),
+            "average_percentage": round(sum(percentages) / len(percentages), 1) if percentages else 0,
+            "completion_rate": round((len(submitted) / len(attempt_rows)) * 100, 1) if attempt_rows else 0,
+            "quiz_performance": chart}
+
+
+@app.get("/api/audit-logs")
+def audit_logs(db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+    query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(100)
+    rows = db.scalars(query).all()
+    if user.role == Role.teacher:
+        owned_quiz_ids = set(db.scalars(select(Quiz.id).where(Quiz.creator_id == user.id)).all())
+        owned_attempt_ids = set(db.scalars(select(Attempt.id).where(Attempt.quiz_id.in_(owned_quiz_ids))).all()) if owned_quiz_ids else set()
+        rows = [row for row in rows if row.actor_id == user.id or
+                (row.entity_type == "quiz" and row.entity_id in owned_quiz_ids) or
+                (row.entity_type == "attempt" and row.entity_id in owned_attempt_ids)]
+    return [{"id": row.id, "actor_name": row.actor_name, "action": row.action,
+             "entity_type": row.entity_type, "entity_id": row.entity_id,
+             "details": row.details, "created_at": row.created_at} for row in rows]
 
 
 @app.get("/api/attempts/{attempt_id}")
@@ -564,5 +634,8 @@ def finalize(attempt_id: int, db: Session = Depends(get_db), user: User = Depend
 @app.post("/api/attempts/{attempt_id}/allow-retake")
 def allow_retake(attempt_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
     attempt = get_attempt(db, attempt_id); ensure_quiz_owner(attempt.quiz, user)
-    attempt.retake_allowed = True; db.commit()
+    attempt.retake_allowed = True
+    add_audit(db, user, "student_retake_allowed", "attempt", attempt.id,
+              f"Allowed {attempt.student.name} a new attempt for {attempt.quiz.title}")
+    db.commit()
     return {"message": "Student may retake this quiz once"}

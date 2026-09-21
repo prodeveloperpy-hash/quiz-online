@@ -4,4 +4,4 @@ export type Option = {id:number; text:string; is_correct?:boolean}
 export type Question = {id:number; text:string; question_type:'mcq'|'short'; marks:number; options:Option[]}
 export type QuizAudience = {department:string; semester:number; section:string}
 export type Quiz = {id:number; title:string; description:string; department:string; semester:number; section:string; audiences?:QuizAudience[]; duration_minutes:number; starts_at:string; ends_at:string; status:string; creator_name:string; questions:Question[]}
-export type Attempt = {id:number; quiz_id:number; quiz_title:string; student_name:string; status:string; objective_score:number; manual_score:number; total_score:number; total_marks:number; tab_violations:number; submission_reason?:string; retake_allowed:boolean}
+export type Attempt = {id:number; quiz_id:number; quiz_title:string; student_name:string; student_roll_number?:string; attempt_number:number; status:string; objective_score:number; manual_score:number; total_score:number; total_marks:number; tab_violations:number; submission_reason?:string; retake_allowed:boolean}
