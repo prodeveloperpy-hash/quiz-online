@@ -126,14 +126,13 @@ if errorlevel 1 (
 )
 popd
 
-echo [INFO] Checking FastAPI backend...
-curl.exe --silent --fail --max-time 3 "http://127.0.0.1:8000/api/health" >nul 2>nul
-if errorlevel 1 (
-    echo [INFO] Starting FastAPI backend...
-    start "Quiz Online - Backend" cmd /k call "%~dp0run-backend.bat"
-) else (
-    echo [OK] FastAPI backend is already running.
-)
+echo [INFO] Closing any previous Quiz Online processes...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"127.0.0.1:8000 .*LISTENING"') do taskkill /PID %%P /T /F >nul 2>nul
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"127.0.0.1:5173 .*LISTENING"') do taskkill /PID %%P /T /F >nul 2>nul
+timeout /t 2 /nobreak >nul
+
+echo [INFO] Starting FastAPI backend in this session...
+start "" /b cmd /c call "%~dp0run-backend.bat"
 
 echo [INFO] Waiting for FastAPI backend...
 set /a API_TRIES=0
@@ -155,7 +154,7 @@ exit /b 1
 echo [OK] FastAPI backend is responding.
 
 echo [INFO] Starting React frontend...
-start "Quiz Online - Frontend" cmd /k call "%~dp0run-frontend.bat"
+start "" /b cmd /c call "%~dp0run-frontend.bat"
 
 echo [INFO] Waiting for the application...
 timeout /t 5 /nobreak >nul
@@ -168,8 +167,16 @@ echo  Frontend:  http://localhost:5173
 echo  API Docs:  http://localhost:8000/docs
 echo ========================================================
 echo.
-echo You may close this launcher window.
-timeout /t 8 /nobreak >nul
+echo Keep this window open while using Quiz Online.
+echo Press any key to stop the backend and frontend safely.
+pause >nul
+
+echo.
+echo [INFO] Stopping Quiz Online services...
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"127.0.0.1:8000 .*LISTENING"') do taskkill /PID %%P /T /F >nul 2>nul
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:"127.0.0.1:5173 .*LISTENING"') do taskkill /PID %%P /T /F >nul 2>nul
+echo [OK] Backend and frontend stopped.
+timeout /t 2 /nobreak >nul
 endlocal
 exit /b 0
 
