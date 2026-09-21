@@ -274,6 +274,44 @@ def create_quiz(data: QuizCreate, db: Session = Depends(get_db), user: User = De
     return {"id": quiz.id, "message": "Quiz created as draft"}
 
 
+@app.put("/api/quizzes/{quiz_id}")
+def update_quiz(quiz_id: int, data: QuizCreate, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+    quiz = db.scalar(select(Quiz).where(Quiz.id == quiz_id).options(selectinload(Quiz.questions).selectinload(Question.options)))
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    ensure_quiz_owner(quiz, user)
+    if db.scalar(select(Attempt.id).where(Attempt.quiz_id == quiz.id).limit(1)):
+        raise HTTPException(409, "This quiz already has student attempts and its questions cannot be changed")
+    quiz.title, quiz.description = data.title, data.description
+    quiz.department, quiz.semester, quiz.section = data.department, data.semester, data.section.upper()
+    if data.duration_minutes:
+        quiz.duration_minutes = data.duration_minutes
+    if data.starts_at:
+        quiz.starts_at = utc_naive(data.starts_at)
+    if data.ends_at:
+        quiz.ends_at = utc_naive(data.ends_at)
+    quiz.questions.clear()
+    for index, item in enumerate(data.questions):
+        question = Question(text=item.text, question_type=item.question_type, marks=item.marks, position=index)
+        question.options = [Option(text=option.text, is_correct=option.is_correct) for option in item.options]
+        quiz.questions.append(question)
+    db.commit()
+    return {"message": "Quiz updated successfully"}
+
+
+@app.delete("/api/quizzes/{quiz_id}")
+def delete_quiz(quiz_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+    quiz = db.get(Quiz, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    ensure_quiz_owner(quiz, user)
+    if db.scalar(select(Attempt.id).where(Attempt.quiz_id == quiz.id).limit(1)):
+        raise HTTPException(409, "This quiz has student submissions and cannot be deleted")
+    db.delete(quiz)
+    db.commit()
+    return {"message": "Quiz deleted successfully"}
+
+
 @app.get("/api/quizzes")
 def quizzes(db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = select(Quiz).options(selectinload(Quiz.creator), selectinload(Quiz.questions).selectinload(Question.options)).order_by(Quiz.created_at.desc())
