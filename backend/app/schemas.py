@@ -38,12 +38,19 @@ class QuestionIn(BaseModel):
         return self
 
 
+class QuizAudienceIn(BaseModel):
+    department: str
+    semester: int = Field(ge=1, le=20)
+    section: str
+
+
 class QuizCreate(BaseModel):
     title: str
     description: str = ""
     department: str
     semester: int = Field(ge=1, le=20)
     section: str
+    audiences: list[QuizAudienceIn] = Field(default_factory=list)
     duration_minutes: int = Field(default=30, ge=1, le=240)
     starts_at: datetime | None = None
     ends_at: datetime | None = None

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -53,6 +53,7 @@ class Quiz(Base):
     department: Mapped[str] = mapped_column(String(100))
     semester: Mapped[int] = mapped_column(Integer)
     section: Mapped[str] = mapped_column(String(20))
+    audiences: Mapped[list | None] = mapped_column(JSON, nullable=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=30)
     starts_at: Mapped[datetime] = mapped_column(DateTime)
     ends_at: Mapped[datetime] = mapped_column(DateTime)

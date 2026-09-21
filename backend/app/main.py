@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session, selectinload
 from .auth import allow_roles, create_token, current_user, hash_password, verify_password
 from .config import settings
@@ -28,6 +28,9 @@ def utc_naive(value: datetime) -> datetime:
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    if "audiences" not in {column["name"] for column in inspect(engine).get_columns("quizzes")}:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE quizzes ADD COLUMN audiences JSON NULL"))
 
 
 def public_user(user: User) -> dict:
@@ -37,11 +40,12 @@ def public_user(user: User) -> dict:
 
 
 def quiz_dict(quiz: Quiz, include_answers: bool = False) -> dict:
+    audiences = quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]
     return {
         "id": quiz.id, "title": quiz.title, "description": quiz.description,
         "department": quiz.department, "semester": quiz.semester, "section": quiz.section,
         "duration_minutes": quiz.duration_minutes, "starts_at": quiz.starts_at, "ends_at": quiz.ends_at,
-        "status": quiz.status.value, "creator_name": quiz.creator.name,
+        "status": quiz.status.value, "creator_name": quiz.creator.name, "audiences": audiences,
         "questions": [{
             "id": q.id, "text": q.text, "question_type": q.question_type.value, "marks": q.marks,
             "options": [{"id": o.id, "text": o.text, **({"is_correct": o.is_correct} if include_answers else {})} for o in q.options]
@@ -52,6 +56,19 @@ def quiz_dict(quiz: Quiz, include_answers: bool = False) -> dict:
 def ensure_quiz_owner(quiz: Quiz, user: User):
     if user.role == Role.teacher and quiz.creator_id != user.id:
         raise HTTPException(403, "Teachers can only manage their own quizzes")
+
+
+def normalized_audiences(data: QuizCreate) -> list[dict]:
+    rows = data.audiences or [{"department": data.department, "semester": data.semester, "section": data.section}]
+    unique: list[dict] = []
+    for row in rows:
+        item = row if isinstance(row, dict) else row.model_dump()
+        normalized = {"department": item["department"], "semester": int(item["semester"]), "section": item["section"].upper()}
+        if normalized not in unique:
+            unique.append(normalized)
+    if not unique:
+        raise HTTPException(422, "Select at least one class for this quiz")
+    return unique
 
 
 def get_attempt(db: Session, attempt_id: int, load: bool = True) -> Attempt:
@@ -181,7 +198,9 @@ def update_department(department_id: int, data: DepartmentIn, db: Session = Depe
     if not row: raise HTTPException(404, "Department not found")
     old_name = row.name; row.name = data.name.strip(); row.is_active = data.is_active
     for account in db.scalars(select(User).where(User.department == old_name)): account.department = row.name
-    for quiz in db.scalars(select(Quiz).where(Quiz.department == old_name)): quiz.department = row.name
+    for quiz in db.scalars(select(Quiz)):
+        if quiz.department == old_name: quiz.department = row.name
+        if quiz.audiences: quiz.audiences = [{**target, "department": row.name if target.get("department") == old_name else target.get("department")} for target in quiz.audiences]
     db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
 
 
@@ -189,7 +208,8 @@ def update_department(department_id: int, data: DepartmentIn, db: Session = Depe
 def delete_department(department_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
     row = db.get(AcademicDepartment, department_id)
     if not row: raise HTTPException(404, "Department not found")
-    if db.scalar(select(User.id).where(User.department == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.department == row.name).limit(1)):
+    audience_in_use = any(any(target.get("department") == row.name for target in (quiz.audiences or [])) for quiz in db.scalars(select(Quiz)))
+    if db.scalar(select(User.id).where(User.department == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.department == row.name).limit(1)) or audience_in_use:
         raise HTTPException(409, "Department is assigned to users or quizzes and cannot be deleted")
     db.delete(row); db.commit(); return {"message": "Department deleted"}
 
@@ -212,7 +232,9 @@ def update_semester(semester_id: int, data: SemesterIn, db: Session = Depends(ge
     if not row: raise HTTPException(404, "Semester not found")
     old_number = row.number; row.number = data.number; row.name = data.name; row.is_active = data.is_active
     for account in db.scalars(select(User).where(User.semester == old_number)): account.semester = row.number
-    for quiz in db.scalars(select(Quiz).where(Quiz.semester == old_number)): quiz.semester = row.number
+    for quiz in db.scalars(select(Quiz)):
+        if quiz.semester == old_number: quiz.semester = row.number
+        if quiz.audiences: quiz.audiences = [{**target, "semester": row.number if target.get("semester") == old_number else target.get("semester")} for target in quiz.audiences]
     db.commit(); return {"id": row.id, "number": row.number, "name": row.name, "is_active": row.is_active}
 
 
@@ -220,7 +242,8 @@ def update_semester(semester_id: int, data: SemesterIn, db: Session = Depends(ge
 def delete_semester(semester_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
     row = db.get(AcademicSemester, semester_id)
     if not row: raise HTTPException(404, "Semester not found")
-    if db.scalar(select(User.id).where(User.semester == row.number).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.semester == row.number).limit(1)):
+    audience_in_use = any(any(target.get("semester") == row.number for target in (quiz.audiences or [])) for quiz in db.scalars(select(Quiz)))
+    if db.scalar(select(User.id).where(User.semester == row.number).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.semester == row.number).limit(1)) or audience_in_use:
         raise HTTPException(409, "Semester is assigned to users or quizzes and cannot be deleted")
     db.delete(row); db.commit(); return {"message": "Semester deleted"}
 
@@ -244,7 +267,9 @@ def update_section(section_id: int, data: SectionIn, db: Session = Depends(get_d
     if not row: raise HTTPException(404, "Section not found")
     old_name = row.name; row.name = data.name.strip().upper(); row.is_active = data.is_active
     for account in db.scalars(select(User).where(User.section == old_name)): account.section = row.name
-    for quiz in db.scalars(select(Quiz).where(Quiz.section == old_name)): quiz.section = row.name
+    for quiz in db.scalars(select(Quiz)):
+        if quiz.section == old_name: quiz.section = row.name
+        if quiz.audiences: quiz.audiences = [{**target, "section": row.name if target.get("section") == old_name else target.get("section")} for target in quiz.audiences]
     db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
 
 
@@ -252,7 +277,8 @@ def update_section(section_id: int, data: SectionIn, db: Session = Depends(get_d
 def delete_section(section_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
     row = db.get(AcademicSection, section_id)
     if not row: raise HTTPException(404, "Section not found")
-    if db.scalar(select(User.id).where(User.section == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.section == row.name).limit(1)):
+    audience_in_use = any(any(target.get("section") == row.name for target in (quiz.audiences or [])) for quiz in db.scalars(select(Quiz)))
+    if db.scalar(select(User.id).where(User.section == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.section == row.name).limit(1)) or audience_in_use:
         raise HTTPException(409, "Section is assigned to users or quizzes and cannot be deleted")
     db.delete(row); db.commit(); return {"message": "Section deleted"}
 
@@ -263,8 +289,10 @@ def create_quiz(data: QuizCreate, db: Session = Depends(get_db), user: User = De
         raise HTTPException(422, "Quiz end time must be after its start time")
     draft_start = utc_naive(data.starts_at) if data.starts_at else datetime.utcnow()
     draft_end = utc_naive(data.ends_at) if data.ends_at else (draft_start + timedelta(days=1))
-    quiz = Quiz(title=data.title, description=data.description, creator_id=user.id, department=data.department,
-                semester=data.semester, section=data.section.upper(), duration_minutes=data.duration_minutes,
+    audiences = normalized_audiences(data)
+    primary = audiences[0]
+    quiz = Quiz(title=data.title, description=data.description, creator_id=user.id, department=primary["department"],
+                semester=primary["semester"], section=primary["section"], audiences=audiences, duration_minutes=data.duration_minutes,
                 starts_at=draft_start, ends_at=draft_end)
     for index, q in enumerate(data.questions):
         question = Question(text=q.text, question_type=q.question_type, marks=q.marks, position=index)
@@ -283,7 +311,9 @@ def update_quiz(quiz_id: int, data: QuizCreate, db: Session = Depends(get_db), u
     if db.scalar(select(Attempt.id).where(Attempt.quiz_id == quiz.id).limit(1)):
         raise HTTPException(409, "This quiz already has student attempts and its questions cannot be changed")
     quiz.title, quiz.description = data.title, data.description
-    quiz.department, quiz.semester, quiz.section = data.department, data.semester, data.section.upper()
+    audiences = normalized_audiences(data)
+    primary = audiences[0]
+    quiz.department, quiz.semester, quiz.section, quiz.audiences = primary["department"], primary["semester"], primary["section"], audiences
     if data.duration_minutes:
         quiz.duration_minutes = data.duration_minutes
     if data.starts_at:
@@ -316,11 +346,13 @@ def delete_quiz(quiz_id: int, db: Session = Depends(get_db), user: User = Depend
 def quizzes(db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = select(Quiz).options(selectinload(Quiz.creator), selectinload(Quiz.questions).selectinload(Question.options)).order_by(Quiz.created_at.desc())
     if user.role == Role.student:
-        query = query.where(Quiz.status == QuizStatus.published, Quiz.department == user.department,
-                            Quiz.semester == user.semester, Quiz.section == user.section)
+        query = query.where(Quiz.status == QuizStatus.published)
     elif user.role == Role.teacher:
         query = query.where(Quiz.creator_id == user.id)
-    return [quiz_dict(q, include_answers=user.role != Role.student) for q in db.scalars(query).unique().all()]
+    rows = db.scalars(query).unique().all()
+    if user.role == Role.student:
+        rows = [quiz for quiz in rows if any((target.get("department"), target.get("semester"), target.get("section")) == (user.department, user.semester, user.section) for target in (quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]))]
+    return [quiz_dict(q, include_answers=user.role != Role.student) for q in rows]
 
 
 @app.post("/api/quizzes/{quiz_id}/publish")
@@ -345,7 +377,8 @@ def start_quiz(quiz_id: int, db: Session = Depends(get_db), student: User = Depe
     quiz = db.scalar(select(Quiz).where(Quiz.id == quiz_id).options(selectinload(Quiz.questions).selectinload(Question.options), selectinload(Quiz.creator)))
     now = datetime.utcnow()
     if not quiz or quiz.status != QuizStatus.published: raise HTTPException(404, "Quiz is unavailable")
-    if (quiz.department, quiz.semester, quiz.section) != (student.department, student.semester, student.section):
+    targets = quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]
+    if not any((target.get("department"), target.get("semester"), target.get("section")) == (student.department, student.semester, student.section) for target in targets):
         raise HTTPException(403, "This quiz is not assigned to your class")
     if now < quiz.starts_at or now > quiz.ends_at: raise HTTPException(400, "Quiz is outside its scheduled availability")
     previous = db.scalar(select(Attempt).where(Attempt.quiz_id == quiz.id, Attempt.student_id == student.id).order_by(Attempt.attempt_number.desc()))
