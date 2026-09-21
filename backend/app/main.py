@@ -29,7 +29,7 @@ def startup():
 def public_user(user: User) -> dict:
     return {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value,
             "department": user.department,
-            "semester": user.semester, "section": user.section}
+            "semester": user.semester, "section": user.section, "is_active": user.is_active}
 
 
 def quiz_dict(quiz: Quiz, include_answers: bool = False) -> dict:
@@ -143,6 +143,15 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), a
     return public_user(user)
 
 
+@app.delete("/api/users/{user_id}")
+def deactivate_user(user_id: int, db: Session = Depends(get_db), actor: User = Depends(allow_roles(Role.admin))):
+    user = db.get(User, user_id)
+    if not user: raise HTTPException(404, "User not found")
+    if user.id == actor.id: raise HTTPException(409, "You cannot deactivate your own account")
+    user.is_active = False; db.commit()
+    return {"message": "Account deactivated"}
+
+
 @app.get("/api/academic/departments")
 def departments(db: Session = Depends(get_db), user: User = Depends(current_user)):
     return [{"id": d.id, "name": d.name, "is_active": d.is_active} for d in db.scalars(select(AcademicDepartment).order_by(AcademicDepartment.name)).all()]
@@ -163,6 +172,15 @@ def update_department(department_id: int, data: DepartmentIn, db: Session = Depe
     for account in db.scalars(select(User).where(User.department == old_name)): account.department = row.name
     for quiz in db.scalars(select(Quiz).where(Quiz.department == old_name)): quiz.department = row.name
     db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
+
+
+@app.delete("/api/academic/departments/{department_id}")
+def delete_department(department_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicDepartment, department_id)
+    if not row: raise HTTPException(404, "Department not found")
+    if db.scalar(select(User.id).where(User.department == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.department == row.name).limit(1)):
+        raise HTTPException(409, "Department is assigned to users or quizzes and cannot be deleted")
+    db.delete(row); db.commit(); return {"message": "Department deleted"}
 
 
 @app.get("/api/academic/semesters")
@@ -187,6 +205,15 @@ def update_semester(semester_id: int, data: SemesterIn, db: Session = Depends(ge
     db.commit(); return {"id": row.id, "number": row.number, "name": row.name, "is_active": row.is_active}
 
 
+@app.delete("/api/academic/semesters/{semester_id}")
+def delete_semester(semester_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicSemester, semester_id)
+    if not row: raise HTTPException(404, "Semester not found")
+    if db.scalar(select(User.id).where(User.semester == row.number).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.semester == row.number).limit(1)):
+        raise HTTPException(409, "Semester is assigned to users or quizzes and cannot be deleted")
+    db.delete(row); db.commit(); return {"message": "Semester deleted"}
+
+
 @app.get("/api/academic/sections")
 def sections(db: Session = Depends(get_db), user: User = Depends(current_user)):
     return [{"id": s.id, "name": s.name, "is_active": s.is_active} for s in db.scalars(select(AcademicSection).order_by(AcademicSection.name)).all()]
@@ -208,6 +235,15 @@ def update_section(section_id: int, data: SectionIn, db: Session = Depends(get_d
     for account in db.scalars(select(User).where(User.section == old_name)): account.section = row.name
     for quiz in db.scalars(select(Quiz).where(Quiz.section == old_name)): quiz.section = row.name
     db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
+
+
+@app.delete("/api/academic/sections/{section_id}")
+def delete_section(section_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicSection, section_id)
+    if not row: raise HTTPException(404, "Section not found")
+    if db.scalar(select(User.id).where(User.section == row.name).limit(1)) or db.scalar(select(Quiz.id).where(Quiz.section == row.name).limit(1)):
+        raise HTTPException(409, "Section is assigned to users or quizzes and cannot be deleted")
+    db.delete(row); db.commit(); return {"message": "Section deleted"}
 
 
 @app.post("/api/quizzes")
