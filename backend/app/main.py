@@ -71,6 +71,12 @@ def normalized_audiences(data: QuizCreate) -> list[dict]:
     return unique
 
 
+def class_matches(target: dict, department: str | None, semester: int | None, section: str | None) -> bool:
+    return (str(target.get("department", "")).strip().casefold() == str(department or "").strip().casefold()
+            and int(target.get("semester", 0)) == int(semester or 0)
+            and str(target.get("section", "")).strip().casefold() == str(section or "").strip().casefold())
+
+
 def get_attempt(db: Session, attempt_id: int, load: bool = True) -> Attempt:
     query = select(Attempt).where(Attempt.id == attempt_id)
     if load:
@@ -351,7 +357,7 @@ def quizzes(db: Session = Depends(get_db), user: User = Depends(current_user)):
         query = query.where(Quiz.creator_id == user.id)
     rows = db.scalars(query).unique().all()
     if user.role == Role.student:
-        rows = [quiz for quiz in rows if any((target.get("department"), target.get("semester"), target.get("section")) == (user.department, user.semester, user.section) for target in (quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]))]
+        rows = [quiz for quiz in rows if any(class_matches(target, user.department, user.semester, user.section) for target in (quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]))]
     return [quiz_dict(q, include_answers=user.role != Role.student) for q in rows]
 
 
@@ -368,8 +374,15 @@ def publish_quiz(quiz_id: int, data: QuizPublishIn, db: Session = Depends(get_db
     quiz.duration_minutes = data.duration_minutes
     quiz.starts_at = publish_start
     quiz.ends_at = publish_end
+    if data.audiences:
+        audiences = []
+        for target in data.audiences:
+            normalized = {"department": target.department, "semester": target.semester, "section": target.section.upper()}
+            if normalized not in audiences: audiences.append(normalized)
+        quiz.audiences = audiences
+        quiz.department, quiz.semester, quiz.section = audiences[0]["department"], audiences[0]["semester"], audiences[0]["section"]
     quiz.status = QuizStatus.published; db.commit()
-    return {"message": "Quiz scheduled and published"}
+    return {"message": "Quiz assignments, schedule, and publication updated"}
 
 
 @app.post("/api/quizzes/{quiz_id}/start")
@@ -378,7 +391,7 @@ def start_quiz(quiz_id: int, db: Session = Depends(get_db), student: User = Depe
     now = datetime.utcnow()
     if not quiz or quiz.status != QuizStatus.published: raise HTTPException(404, "Quiz is unavailable")
     targets = quiz.audiences or [{"department": quiz.department, "semester": quiz.semester, "section": quiz.section}]
-    if not any((target.get("department"), target.get("semester"), target.get("section")) == (student.department, student.semester, student.section) for target in targets):
+    if not any(class_matches(target, student.department, student.semester, student.section) for target in targets):
         raise HTTPException(403, "This quiz is not assigned to your class")
     if now < quiz.starts_at or now > quiz.ends_at: raise HTTPException(400, "Quiz is outside its scheduled availability")
     previous = db.scalar(select(Attempt).where(Attempt.quiz_id == quiz.id, Attempt.student_id == student.id).order_by(Attempt.attempt_number.desc()))

@@ -61,6 +61,7 @@ class QuizPublishIn(BaseModel):
     duration_minutes: int = Field(ge=1, le=240)
     starts_at: datetime
     ends_at: datetime
+    audiences: list[QuizAudienceIn] = Field(default_factory=list)
 
 
 class AnswerIn(BaseModel):
