@@ -7,8 +7,8 @@ from .auth import allow_roles, create_token, current_user, hash_password, verify
 from .config import settings
 from .database import Base, engine, get_db
 from .email_service import send_result_email
-from .models import AcademicDepartment, AcademicSemester, Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
-from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, SaveAnswersIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
+from .models import AcademicDepartment, AcademicSection, AcademicSemester, Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
+from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, SaveAnswersIn, SectionIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
 
 
 app = FastAPI(title="Quiz Online API", version="1.0.0")
@@ -185,6 +185,29 @@ def update_semester(semester_id: int, data: SemesterIn, db: Session = Depends(ge
     for account in db.scalars(select(User).where(User.semester == old_number)): account.semester = row.number
     for quiz in db.scalars(select(Quiz).where(Quiz.semester == old_number)): quiz.semester = row.number
     db.commit(); return {"id": row.id, "number": row.number, "name": row.name, "is_active": row.is_active}
+
+
+@app.get("/api/academic/sections")
+def sections(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return [{"id": s.id, "name": s.name, "is_active": s.is_active} for s in db.scalars(select(AcademicSection).order_by(AcademicSection.name)).all()]
+
+
+@app.post("/api/academic/sections")
+def create_section(data: SectionIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    name = data.name.strip().upper()
+    if db.scalar(select(AcademicSection).where(AcademicSection.name == name)): raise HTTPException(409, "Section already exists")
+    row = AcademicSection(name=name, is_active=data.is_active); db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "name": row.name, "is_active": row.is_active}
+
+
+@app.put("/api/academic/sections/{section_id}")
+def update_section(section_id: int, data: SectionIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicSection, section_id)
+    if not row: raise HTTPException(404, "Section not found")
+    old_name = row.name; row.name = data.name.strip().upper(); row.is_active = data.is_active
+    for account in db.scalars(select(User).where(User.section == old_name)): account.section = row.name
+    for quiz in db.scalars(select(Quiz).where(Quiz.section == old_name)): quiz.section = row.name
+    db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
 
 
 @app.post("/api/quizzes")

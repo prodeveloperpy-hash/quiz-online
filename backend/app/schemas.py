@@ -93,3 +93,8 @@ class SemesterIn(BaseModel):
     number: int = Field(ge=1, le=20)
     name: str = Field(min_length=1, max_length=100)
     is_active: bool = True
+
+
+class SectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=30)
+    is_active: bool = True

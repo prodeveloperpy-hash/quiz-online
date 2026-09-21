@@ -133,3 +133,10 @@ class AcademicSemester(Base):
     number: Mapped[int] = mapped_column(Integer, unique=True)
     name: Mapped[str] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AcademicSection(Base):
+    __tablename__ = "academic_sections"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(30), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from app.auth import hash_password
 from app.database import Base, SessionLocal, engine
-from app.models import AcademicDepartment, AcademicSemester, Role, User
+from app.models import AcademicDepartment, AcademicSection, AcademicSemester, Role, User
 
 
 Base.metadata.create_all(bind=engine)
@@ -22,5 +22,8 @@ for department in ["CS", "IT", "Software Engineering"]:
 for number in range(1, 9):
     if not db.scalar(select(AcademicSemester).where(AcademicSemester.number == number)):
         db.add(AcademicSemester(number=number, name=f"Semester {number}"))
+for section in ["A", "B"]:
+    if not db.scalar(select(AcademicSection).where(AcademicSection.name == section)):
+        db.add(AcademicSection(name=section))
 db.commit(); db.close()
 print("Demo users created.")
