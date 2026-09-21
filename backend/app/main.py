@@ -385,6 +385,25 @@ def publish_quiz(quiz_id: int, data: QuizPublishIn, db: Session = Depends(get_db
     return {"message": "Quiz assignments, schedule, and publication updated"}
 
 
+@app.post("/api/quizzes/{quiz_id}/resend")
+def resend_quiz_to_all(quiz_id: int, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin, Role.teacher))):
+    quiz = db.get(Quiz, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+    ensure_quiz_owner(quiz, user)
+    if quiz.status != QuizStatus.published:
+        raise HTTPException(409, "Publish the quiz before resending it")
+    rows = db.scalars(select(Attempt).where(Attempt.quiz_id == quiz.id).order_by(Attempt.student_id, Attempt.attempt_number.desc())).all()
+    latest_by_student: dict[int, Attempt] = {}
+    for attempt in rows:
+        latest_by_student.setdefault(attempt.student_id, attempt)
+    eligible = [attempt for attempt in latest_by_student.values() if attempt.status != AttemptStatus.in_progress]
+    for attempt in eligible:
+        attempt.retake_allowed = True
+    db.commit()
+    return {"message": f"Quiz resent to {len(eligible)} student(s) who already completed it", "students_enabled": len(eligible)}
+
+
 @app.post("/api/quizzes/{quiz_id}/start")
 def start_quiz(quiz_id: int, db: Session = Depends(get_db), student: User = Depends(allow_roles(Role.student))):
     quiz = db.scalar(select(Quiz).where(Quiz.id == quiz_id).options(selectinload(Quiz.questions).selectinload(Question.options), selectinload(Quiz.creator)))
