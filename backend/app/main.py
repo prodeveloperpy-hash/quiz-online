@@ -7,8 +7,8 @@ from .auth import allow_roles, create_token, current_user, hash_password, verify
 from .config import settings
 from .database import Base, engine, get_db
 from .email_service import send_result_email
-from .models import Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
-from .schemas import GradeIn, LoginIn, QuizCreate, SaveAnswersIn, TokenOut, UserCreate, ViolationIn
+from .models import AcademicDepartment, AcademicSemester, Answer, Attempt, AttemptStatus, Option, Question, QuestionType, Quiz, QuizStatus, Role, User
+from .schemas import DepartmentIn, GradeIn, LoginIn, QuizCreate, SaveAnswersIn, SemesterIn, TokenOut, UserCreate, UserUpdate, ViolationIn
 
 
 app = FastAPI(title="Quiz Online API", version="1.0.0")
@@ -28,14 +28,14 @@ def startup():
 
 def public_user(user: User) -> dict:
     return {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value,
-            "department": user.department.value if user.department else None,
+            "department": user.department,
             "semester": user.semester, "section": user.section}
 
 
 def quiz_dict(quiz: Quiz, include_answers: bool = False) -> dict:
     return {
         "id": quiz.id, "title": quiz.title, "description": quiz.description,
-        "department": quiz.department.value, "semester": quiz.semester, "section": quiz.section,
+        "department": quiz.department, "semester": quiz.semester, "section": quiz.section,
         "duration_minutes": quiz.duration_minutes, "starts_at": quiz.starts_at, "ends_at": quiz.ends_at,
         "status": quiz.status.value, "creator_name": quiz.creator.name,
         "questions": [{
@@ -124,6 +124,67 @@ def list_users(db: Session = Depends(get_db), actor: User = Depends(allow_roles(
     if actor.role == Role.teacher:
         query = query.where(User.role == Role.student)
     return [public_user(u) for u in db.scalars(query).all()]
+
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), actor: User = Depends(allow_roles(Role.admin))):
+    user = db.get(User, user_id)
+    if not user: raise HTTPException(404, "User not found")
+    values = data.model_dump(exclude_unset=True)
+    if "email" in values:
+        values["email"] = str(values["email"]).lower()
+        duplicate = db.scalar(select(User).where(User.email == values["email"], User.id != user.id))
+        if duplicate: raise HTTPException(409, "Email already exists")
+    password = values.pop("password", None)
+    if password: user.password_hash = hash_password(password)
+    if values.get("section"): values["section"] = values["section"].upper()
+    for key, value in values.items(): setattr(user, key, value)
+    db.commit(); db.refresh(user)
+    return public_user(user)
+
+
+@app.get("/api/academic/departments")
+def departments(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return [{"id": d.id, "name": d.name, "is_active": d.is_active} for d in db.scalars(select(AcademicDepartment).order_by(AcademicDepartment.name)).all()]
+
+
+@app.post("/api/academic/departments")
+def create_department(data: DepartmentIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    if db.scalar(select(AcademicDepartment).where(AcademicDepartment.name == data.name.strip())): raise HTTPException(409, "Department already exists")
+    row = AcademicDepartment(name=data.name.strip(), is_active=data.is_active); db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "name": row.name, "is_active": row.is_active}
+
+
+@app.put("/api/academic/departments/{department_id}")
+def update_department(department_id: int, data: DepartmentIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicDepartment, department_id)
+    if not row: raise HTTPException(404, "Department not found")
+    old_name = row.name; row.name = data.name.strip(); row.is_active = data.is_active
+    for account in db.scalars(select(User).where(User.department == old_name)): account.department = row.name
+    for quiz in db.scalars(select(Quiz).where(Quiz.department == old_name)): quiz.department = row.name
+    db.commit(); return {"id": row.id, "name": row.name, "is_active": row.is_active}
+
+
+@app.get("/api/academic/semesters")
+def semesters(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    return [{"id": s.id, "number": s.number, "name": s.name, "is_active": s.is_active} for s in db.scalars(select(AcademicSemester).order_by(AcademicSemester.number)).all()]
+
+
+@app.post("/api/academic/semesters")
+def create_semester(data: SemesterIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    if db.scalar(select(AcademicSemester).where(AcademicSemester.number == data.number)): raise HTTPException(409, "Semester already exists")
+    row = AcademicSemester(**data.model_dump()); db.add(row); db.commit(); db.refresh(row)
+    return {"id": row.id, "number": row.number, "name": row.name, "is_active": row.is_active}
+
+
+@app.put("/api/academic/semesters/{semester_id}")
+def update_semester(semester_id: int, data: SemesterIn, db: Session = Depends(get_db), user: User = Depends(allow_roles(Role.admin))):
+    row = db.get(AcademicSemester, semester_id)
+    if not row: raise HTTPException(404, "Semester not found")
+    old_number = row.number; row.number = data.number; row.name = data.name; row.is_active = data.is_active
+    for account in db.scalars(select(User).where(User.semester == old_number)): account.semester = row.number
+    for quiz in db.scalars(select(Quiz).where(Quiz.semester == old_number)): quiz.semester = row.number
+    db.commit(); return {"id": row.id, "number": row.number, "name": row.name, "is_active": row.is_active}
 
 
 @app.post("/api/quizzes")

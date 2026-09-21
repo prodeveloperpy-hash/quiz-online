@@ -11,12 +11,6 @@ class Role(str, Enum):
     student = "student"
 
 
-class Department(str, Enum):
-    cs = "CS"
-    it = "IT"
-    se = "Software Engineering"
-
-
 class QuestionType(str, Enum):
     mcq = "mcq"
     short = "short"
@@ -42,7 +36,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(180), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(SAEnum(Role))
-    department: Mapped[Department | None] = mapped_column(SAEnum(Department), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     semester: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -55,7 +49,7 @@ class Quiz(Base):
     title: Mapped[str] = mapped_column(String(180))
     description: Mapped[str] = mapped_column(Text, default="")
     creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    department: Mapped[Department] = mapped_column(SAEnum(Department))
+    department: Mapped[str] = mapped_column(String(100))
     semester: Mapped[int] = mapped_column(Integer)
     section: Mapped[str] = mapped_column(String(20))
     duration_minutes: Mapped[int] = mapped_column(Integer, default=30)
@@ -125,3 +119,17 @@ class Answer(Base):
     question: Mapped[Question] = relationship()
     selected_option: Mapped[Option | None] = relationship()
 
+
+class AcademicDepartment(Base):
+    __tablename__ = "academic_departments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AcademicSemester(Base):
+    __tablename__ = "academic_semesters"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    number: Mapped[int] = mapped_column(Integer, unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

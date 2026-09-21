@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, model_validator
-from .models import Department, QuestionType, QuizStatus, Role
+from .models import QuestionType, QuizStatus, Role
 
 
 class LoginIn(BaseModel):
@@ -13,8 +13,8 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     role: Role
-    department: Department | None = None
-    semester: int | None = Field(default=None, ge=1, le=8)
+    department: str | None = None
+    semester: int | None = Field(default=None, ge=1, le=20)
     section: str | None = None
 
 
@@ -40,8 +40,8 @@ class QuestionIn(BaseModel):
 class QuizCreate(BaseModel):
     title: str
     description: str = ""
-    department: Department
-    semester: int = Field(ge=1, le=8)
+    department: str
+    semester: int = Field(ge=1, le=20)
     section: str
     duration_minutes: int = Field(ge=1, le=240)
     starts_at: datetime
@@ -73,3 +73,23 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
     user: dict
 
+
+class UserUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    email: EmailStr | None = None
+    password: str | None = Field(default=None, min_length=6)
+    department: str | None = None
+    semester: int | None = Field(default=None, ge=1, le=20)
+    section: str | None = None
+    is_active: bool | None = None
+
+
+class DepartmentIn(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    is_active: bool = True
+
+
+class SemesterIn(BaseModel):
+    number: int = Field(ge=1, le=20)
+    name: str = Field(min_length=1, max_length=100)
+    is_active: bool = True
