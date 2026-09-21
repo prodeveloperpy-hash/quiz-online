@@ -8,13 +8,13 @@ from app.models import AcademicDepartment, AcademicSection, AcademicSemester, Ro
 Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 accounts = [
-    ("System Admin", "admin@onlinequiz.com", "Admin123!", Role.admin, None, None, None),
-    ("Demo Teacher", "teacher@onlinequiz.com", "Teacher123!", Role.teacher, "CS", None, None),
-    ("Demo Student", "student@onlinequiz.com", "Student123!", Role.student, "CS", 1, "A"),
+    ("System Admin", "admin@onlinequiz.com", "Admin123!", Role.admin, None, None, None, None),
+    ("Demo Teacher", "teacher@onlinequiz.com", "Teacher123!", Role.teacher, None, "CS", None, None),
+    ("Demo Student", "student@onlinequiz.com", "Student123!", Role.student, "DEMO-001", "CS", 1, "A"),
 ]
-for name, email, password, role, department, semester, section in accounts:
+for name, email, password, role, roll_number, department, semester, section in accounts:
     if not db.scalar(select(User).where(User.email == email)):
-        db.add(User(name=name, email=email, password_hash=hash_password(password), role=role,
+        db.add(User(name=name, email=email, password_hash=hash_password(password), role=role, roll_number=roll_number,
                     department=department, semester=semester, section=section))
 for department in ["CS", "IT", "Software Engineering"]:
     if not db.scalar(select(AcademicDepartment).where(AcademicDepartment.name == department)):

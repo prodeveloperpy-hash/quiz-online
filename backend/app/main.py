@@ -27,7 +27,7 @@ def startup():
 
 
 def public_user(user: User) -> dict:
-    return {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value,
+    return {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value, "roll_number": user.roll_number,
             "department": user.department,
             "semester": user.semester, "section": user.section, "is_active": user.is_active}
 
@@ -107,11 +107,14 @@ def me(user: User = Depends(current_user)):
 def create_user(data: UserCreate, db: Session = Depends(get_db), actor: User = Depends(allow_roles(Role.admin, Role.teacher))):
     if actor.role == Role.teacher and data.role != Role.student:
         raise HTTPException(403, "Teachers may only create student accounts")
-    if data.role == Role.student and (not data.department or not data.semester or not data.section):
-        raise HTTPException(422, "Student department, semester, and section are required")
+    if data.role == Role.student and (not data.roll_number or not data.department or not data.semester or not data.section):
+        raise HTTPException(422, "Student roll number, department, semester, and section are required")
     if db.scalar(select(User).where(User.email == data.email.lower())):
         raise HTTPException(409, "Email already exists")
+    if data.roll_number and db.scalar(select(User).where(User.roll_number == data.roll_number.strip().upper())):
+        raise HTTPException(409, "Roll number already exists")
     user = User(name=data.name, email=data.email.lower(), password_hash=hash_password(data.password), role=data.role,
+                roll_number=data.roll_number.strip().upper() if data.roll_number else None,
                 department=data.department, semester=data.semester, section=data.section.upper() if data.section else None)
     db.add(user)
     db.commit(); db.refresh(user)
@@ -135,6 +138,10 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db), a
         values["email"] = str(values["email"]).lower()
         duplicate = db.scalar(select(User).where(User.email == values["email"], User.id != user.id))
         if duplicate: raise HTTPException(409, "Email already exists")
+    if values.get("roll_number"):
+        values["roll_number"] = values["roll_number"].strip().upper()
+        duplicate_roll = db.scalar(select(User).where(User.roll_number == values["roll_number"], User.id != user.id))
+        if duplicate_roll: raise HTTPException(409, "Roll number already exists")
     password = values.pop("password", None)
     if password: user.password_hash = hash_password(password)
     if values.get("section"): values["section"] = values["section"].upper()

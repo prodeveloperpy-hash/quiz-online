@@ -36,6 +36,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(180), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[Role] = mapped_column(SAEnum(Role))
+    roll_number: Mapped[str | None] = mapped_column(String(50), unique=True, index=True, nullable=True)
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     semester: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(20), nullable=True)

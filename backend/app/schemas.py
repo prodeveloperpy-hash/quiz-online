@@ -13,6 +13,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     role: Role
+    roll_number: str | None = Field(default=None, min_length=2, max_length=50)
     department: str | None = None
     semester: int | None = Field(default=None, ge=1, le=20)
     section: str | None = None
@@ -78,6 +79,7 @@ class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=120)
     email: EmailStr | None = None
     password: str | None = Field(default=None, min_length=6)
+    roll_number: str | None = Field(default=None, min_length=2, max_length=50)
     department: str | None = None
     semester: int | None = Field(default=None, ge=1, le=20)
     section: str | None = None
