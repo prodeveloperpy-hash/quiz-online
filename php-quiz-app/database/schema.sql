@@ -1,0 +1,70 @@
+CREATE DATABASE IF NOT EXISTS online_quiz_php CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE online_quiz_php;
+
+CREATE TABLE IF NOT EXISTS users (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  password VARCHAR(255) NOT NULL,
+  role ENUM('student','teacher','admin') NOT NULL DEFAULT 'student',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS categories (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(80) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS quizzes (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category_id INT UNSIGNED NOT NULL,
+  title VARCHAR(180) NOT NULL,
+  description TEXT,
+  time_limit_minutes INT UNSIGNED NOT NULL DEFAULT 10,
+  allow_retakes TINYINT(1) NOT NULL DEFAULT 1,
+  is_published TINYINT(1) NOT NULL DEFAULT 0,
+  created_by INT UNSIGNED NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_quiz_category FOREIGN KEY (category_id) REFERENCES categories(id),
+  CONSTRAINT fk_quiz_creator FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS questions (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  quiz_id INT UNSIGNED NOT NULL,
+  question_text TEXT NOT NULL,
+  CONSTRAINT fk_question_quiz FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS options (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  question_id INT UNSIGNED NOT NULL,
+  option_text VARCHAR(500) NOT NULL,
+  is_correct TINYINT(1) NOT NULL DEFAULT 0,
+  CONSTRAINT fk_option_question FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS attempts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED NOT NULL,
+  quiz_id INT UNSIGNED NOT NULL,
+  score INT UNSIGNED NOT NULL,
+  total_questions INT UNSIGNED NOT NULL,
+  percentage DECIMAL(5,2) NOT NULL,
+  completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_attempt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_attempt_quiz FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS attempt_answers (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  attempt_id INT UNSIGNED NOT NULL,
+  question_id INT UNSIGNED NOT NULL,
+  selected_option_id INT UNSIGNED NULL,
+  is_correct TINYINT(1) NOT NULL DEFAULT 0,
+  CONSTRAINT fk_answer_attempt FOREIGN KEY (attempt_id) REFERENCES attempts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_answer_question FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_answer_option FOREIGN KEY (selected_option_id) REFERENCES options(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+INSERT IGNORE INTO categories(name) VALUES ('Programming'),('Mathematics'),('Science'),('General Knowledge');
